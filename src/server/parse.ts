@@ -226,3 +226,53 @@ export function isPiUnknownSessionError(stdout: string, stderr: string): boolean
 
   return /unknown\s+session|session\s+not\s+found|session\s+.*\s+not\s+found|no\s+session/i.test(haystack);
 }
+
+/**
+ * Detect pi's logical-completion signal in raw JSON-mode stdout.
+ *
+ * pi (`--mode json -p`) emits one JSON object per line. The terminal signal for
+ * a single-shot run is an `agent_end` event whose `willRetry` field is not
+ * `true` — pi annotates every `agent_end` with `willRetry` via
+ * `_willRetryAfterAgentEnd()`, and only sets it to `true` while an auto-retry
+ * is pending. Anything else (`false`, or absent on an older pi build) means the
+ * agent loop has finished and the process is expected to exit.
+ *
+ * Why this exists: some pi runs emit `agent_end` (logical done) but never
+ * terminate because a leaked handle (open MCP connection, stray timer, readline
+ * on stdin) keeps the Node event loop alive. The process hangs idle and the
+ * Paperclip heartbeat run stays `running` forever. `runChildProcess` accepts a
+ * `terminalResultCleanup` hook that, once this returns `true`, gives the child
+ * a short grace window to exit on its own and then force-terminates it so the
+ * run can finalize to a terminal status. This function is that hook's detector.
+ *
+ * @param output accumulated raw stdout/stderr (the runner passes a sliding
+ *   window ending at the most recent chunk, with a large overlap so a line
+ *   split across chunk boundaries is still whole in at least one scan).
+ */
+export function piAgentEndIsTerminal(output: { stdout: string; stderr: string }): boolean {
+  const stdout = typeof output?.stdout === "string" ? output.stdout : "";
+  if (!stdout.includes('"agent_end"')) return false;
+
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("{") || !line.includes('"agent_end"')) continue;
+
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (
+      event &&
+      typeof event === "object" &&
+      (event as Record<string, unknown>).type === "agent_end" &&
+      (event as Record<string, unknown>).willRetry !== true
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}

@@ -58,4 +58,4 @@ export {
   ensurePiModelConfiguredAndAvailable,
   resetPiModelsCacheForTests,
 } from "./models.js";
-export { parsePiJsonl, isPiUnknownSessionError } from "./parse.js";
+export { parsePiJsonl, isPiUnknownSessionError, piAgentEndIsTerminal } from "./parse.js";

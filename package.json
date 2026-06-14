@@ -1,6 +1,6 @@
 {
   "name": "adapter-pi-local",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Fork of @paperclipai/adapter-pi-local with opt-in model preflight",
   "license": "MIT",
   "homepage": "https://github.com/buihongduc132/adapter-pi-local",

@@ -46,7 +46,7 @@ import {
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
-import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
+import { isPiUnknownSessionError, piAgentEndIsTerminal, parsePiJsonl } from "./parse.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
@@ -54,6 +54,17 @@ const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 const PAPERCLIP_SESSIONS_DIR = path.join(os.homedir(), ".pi", "paperclips");
 const PI_AGENT_SKILLS_DIR = path.join(os.homedir(), ".pi", "agent", "skills");
+
+/**
+ * Grace window (ms) given to the pi child process to exit on its own after it
+ * emits a terminal `agent_end` (willRetry !== true). If it has not exited by
+ * then — typically because a leaked handle (open MCP connection, stray timer,
+ * readline on stdin) keeps the Node event loop alive — `runChildProcess` force
+ * terminates it (SIGTERM, then SIGKILL after `graceSec`) so the heartbeat run
+ * can finalize instead of staying `running` forever. pi normally exits within
+ * milliseconds of `agent_end`, so this only ever bites the leak case.
+ */
+const PI_AGENT_END_EXIT_GRACE_MS = 5_000;
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -704,6 +715,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       graceSec,
       onSpawn,
       onLog: bufferedOnLog,
+      // Force-reap a forked pi that finished its logical work (agent_end with
+      // willRetry !== true) but did not exit because of a leaked event-loop
+      // handle. Without this the await above never resolves and the heartbeat
+      // run is stuck in `running` (see THE-708). The force kill resolves the
+      // promise with signal SIGTERM/SIGKILL and timedOut=false, so the run is
+      // still classified as succeeded downstream.
+      terminalResultCleanup: {
+        graceMs: PI_AGENT_END_EXIT_GRACE_MS,
+        hasTerminalResult: piAgentEndIsTerminal,
+      },
     });
 
     // Flush any remaining buffer content
