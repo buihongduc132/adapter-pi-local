@@ -1,3 +1,5 @@
 node_modules/
 .claude/
 *.test.ts
+.fusion
+.pi
